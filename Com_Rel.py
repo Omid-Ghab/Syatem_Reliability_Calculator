@@ -19,9 +19,12 @@ import matplotlib.pyplot as plt
 import streamlit as st
 import random
 import json
+import ast
 #=================================
 
 #================================= Part1 =================================#
+
+    
 def show_dist():
     distName = st.session_state.distName_tab
  
@@ -464,8 +467,10 @@ def show_dfit():
 #                 data = make_right_censored_data(b)
                 results = Fit_Everything(failures=data.failures, right_censored=data.right_censored)
                 st.write (" The best distribution fit is : ", results.best_distribution_name)
-                st.write ( results.best_distribution.parameters)
-            
+                #st.write ( results.best_distribution.parameters)
+                st.write (" Alpha value is : ", results.best_distribution.parameters[0])
+                st.write ( " Beta Value is : ",results.best_distribution.parameters[1])
+                
         #   #raw_data = a
            # data = make_right_censored_data(raw_data, threshold=14)
            # results = Fit_Everything(failures=data.failures, right_censored=data.right_censored)
@@ -669,7 +674,8 @@ def calculate(key, reliability):
         dist = Gumbel_Distribution(mu = param1, sigma = param2)
 
     ttf = dist.inverse_SF(reliability) 
-    return round (ttf, 3)
+    sf = dist.SF(int(ttf))
+    return round (ttf, 3),sf
 
 def init_comp_data():
     iteration_count = st.session_state.iteration_count
@@ -680,11 +686,37 @@ def init_comp_data():
                 calculated_comps[key] = []
 
             reliability = random.random()
-            ttf = calculate(key, reliability)
+            ttf,sf = calculate(key, reliability)
             dist_values_dict = {'Reliability': reliability, 'TTF': ttf}
 
             calculated_comps[key].append(dist_values_dict)
+           
+def init_comp_sf():
+    iteration_count = st.session_state.iteration_count
 
+    for iteration in range(iteration_count):
+        for key in comp_def_data:
+            if key not in calculated_comps : 
+                calculated_comps[key] = []
+
+            reliability = random.random()
+            ttf,sf = calculate(key, reliability)
+    return sf
+            
+def init_comp_data_r():
+    iteration_count = st.session_state.iteration_count
+
+    for iteration in range(iteration_count):
+        for key in comp_def_data:
+            if key not in calculated_comps : 
+                calculated_comps[key] = []
+
+            reliability = random.random()
+            ttf,comp_rel = calculate(key, reliability)
+            dist_values_dict = {'Reliability': reliability, 'TTF': comp_rel}
+
+            calculated_comps[key].append(dist_values_dict)
+            
 def init_comp_relations():
     for key in comp_def_data:
         cmp_key = "'" + key + "'"
@@ -729,15 +761,77 @@ def show_ttf():
     e = (  max_time_in_list - min_time_in_list )/2
     e= round (e,3)
     st.write ('System time to failure  is:' , e ) 
-
+    
+    sf = init_comp_sf()
+    st.write ('System reliability:' , sf ) 
    
     plt.hist(ttf_list)
+    #st.pyplot()
     plt.savefig('test.png')
-    plt.show()
+    
 
     # st.write("-----------------")
     # st.write("Component Values:")
     # st.json(calculated_comps)
+    
+
+
+def transform(node):
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        # If the node is a function call with a name as the function,
+        # replace it with a list containing the name and the transformed arguments.
+        return [node.func.id] + [transform(arg) for arg in node.args]
+    elif isinstance(node, ast.Call):
+        # If the node is a function call with something other than a name as the function,
+        # raise an error because we don't know how to handle it.
+        raise ValueError(f"Unsupported function type: {type(node.func)}")
+    elif isinstance(node, ast.Str):
+        # If the node is a string, return its value.
+        return node.s
+    else:
+        # If the node is something else, raise an error because we don't know how to handle it.
+        raise ValueError(f"Unsupported node type: {type(node)}")
+
+
+def comp_config_data_f(file):
+    comp_config_filename =  'comp_config.txt'
+    comp_config_file = open(comp_config_filename)
+    comp_config_data = comp_config_file.read()
+    return comp_config_data
+
+def serial_reliability(components):
+    """Calculates the reliability of a series of components."""
+    reliability = 1
+    for component in components:
+        reliability *= component
+    return reliability
+
+def parallel_reliability(components):
+    """Calculates the reliability of a parallel of components."""
+    reliability = 0
+    for component in components:
+        reliability += (1 - component)
+    return 1 - reliability
+
+def calculate_reliability(calculation_method):
+    """Calculates the reliability of a given calculation method."""
+    components = []
+    for component in calculation_method:
+        if isinstance(component, str):
+            # Assume component is a string identifier for a component's reliability.
+            # In a real implementation, we would need to look up the reliability of the
+            # component from a database or other data source.
+            reliability = 0.9  # example reliability value
+            components.append(reliability)
+        else:
+            # Assume component is a nested calculation method.
+            sub_components = calculate_reliability(component)
+            if "Serial" in str(component):
+                reliability = serial_reliability(sub_components)
+            elif "Parallel" in str(component):
+                reliability = parallel_reliability(sub_components)
+            components.append(reliability)
+    return components
 
 def Com_Sen():
 
@@ -779,16 +873,58 @@ def Com_Sen():
     e = (  max_time_in_list - min_time_in_list )/2
     e= round (e,3)
     st.write ('System time to failure  is:' , e ) 
-
+    
    
     plt.hist(ttf_list)
     plt.savefig('test.png')
     plt.show()
-
+   
+#     st.write("-----------------")
+#     st.write("Component Values:")
+#     st.json(calculated_comps)  
+    
     st.write("-----------------")
-    st.write("Component Values:")
-    st.json(calculated_comps)
+    
+    #st.json(component_probabilities)
+    #st.json(reliability_sums)
+    comp_def_data = comp_config_data_f('comp_config.txt')
+    st.write("Component Config:",comp_def_data)
+    
 
+    calculation_method_str = comp_def_data
+    calculation_method_ast = ast.parse(calculation_method_str)        
+    calculation_method_list = transform(calculation_method_ast.body[0].value)
+    calculation_method = calculation_method_list
+    result = parallel_reliability(calculate_reliability(calculation_method))
+    st.write("Reliability of whole system based on each component reliability",result)
+    st.write("-----------------")
+    data = calculated_comps
+    reliability_sums = {}
+    ttf_sums = {}
+    sums = {}
+    fv_factor = {}
+    total_reliability = 1
+    for key, value in data.items():
+        if key.startswith('c'):
+            n = len(value)
+            reliability_sums[key] = sum(d["Reliability"] for d in value)/n if n > 0 else 0
+            
+    for key, value in reliability_sums.items():
+        if key.startswith('c'):
+            p_0 = value
+            p_1 = 1.0 - p_0
+            sums[key] = abs(p_1-p_0)
+            fv_factor[key] = sums[key]*value
+            
+#     st.write("Fussell-Vesely factor")
+#     st.json(fv_factor)
+    st.write("-----------------")
+    product = sum(fv_factor.values())
+    
+    component_probabilities = {key: round((value /product)*100,2) for key, value in fv_factor.items()}
+    st.write("Sensitivity")
+    st.json(component_probabilities)
+    
 def show_comp_def_File():
 
     st.button(label='Add New Component', on_click=show_add_comp, args=('', ))
@@ -917,15 +1053,25 @@ def show_assistant_comp_config_File():
 
             comp_c_file.close()
 
-            st.write('File ', comp_config_filename, ' was saved.')    
+            st.write('File ', comp_config_filename, ' was saved.')   
     
-    
+def show_comp_rel():
+    st.write("-----------------")
+    st.title('Components Reliability Calculation')
+    st.subheader("Scroll right for Calculation ➡️")
+def show_sys_rel():
+    st.write("-----------------")
+    st.title('System Reliability Calculation')
+    st.subheader("Scroll right for Calculation ➡️")
 #=================================
     
-tab_plots, tab_reliability, tab_ttf, tab_dfit, tab_ORT, tab_comp, tab_conf, tab_montc, tab_sen = st.sidebar.tabs(['Reliability Plots and Stat.', 
-                   'Reliability','Time to Failure', 'Distribution Fitter', 'Optimal Replacement Time','Components Definition', 'Configuration Definition', 
-                                                                                                                  'Monte Carlo Calculation','Sensitivity Analysis'])
-st.header('Component Reliability Calcutaion')
+comp_rel,tab_plots, tab_reliability, tab_ttf, tab_dfit, tab_ORT,sys_rel, tab_comp, tab_conf, tab_montc, tab_sen = st.sidebar.tabs(['Components Reliability',
+    'Reliability Plots', 'Reliability','Time to Failure', 'Distribution Fitter', 'Optimal Replacement Time', 'System Reliability','Components Definition', 
+                 'Configuration Definition'  ,'Monte Carlo Calculation','Sensitivity Analysis'])
+
+with comp_rel:
+    st.button('Components Reliability ', on_click=show_comp_rel)
+
 with tab_plots:
     
     a = st.radio('To view the reliability plots and statistics related to your component, please select its distribution and enter parameters. Then choose your desire plot to show:', ['Weibull' ,
@@ -974,7 +1120,11 @@ with tab_ORT:
              'Beta',
              'Loglogistic',
              'Gumbel'], on_change=show_ort, key='distName_ort')
+    
    
+with sys_rel:
+    st.button('System Reliability ', on_click=show_sys_rel)
+    
 with tab_comp:
     st.write('Steps for defining a componet:  \n1- Click on the Enter your component key.  \n2- Click on Add New Component key.    \n3- Type a unique name for your component.     \n4- Choose the component distribution from the list.     \n5- Enter your Parameters.      \n6- Click on Add/Edit componet.       \n7- Clike on Edit button for editing an existing component.')
     st.button('Enter your Components ', on_click=show_comp_def_File)
